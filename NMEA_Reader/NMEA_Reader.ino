@@ -165,38 +165,55 @@ void loop() {
     // We strictly ONLY update navHeading if we are walking (> 0.8 km/h).
     if (gps.course.isValid() && gps.speed.isValid() && gps.speed.kmph() > 0.8) {
       navHeading = gps.course.deg();
-      Serial.print("Nav Updated");
     }
   }
 
-  // --- 3. Refresh the display once per second (independent of fix) ─────
+  // Check if we lost the fix (no new location data for over 2 seconds)
+  if (hasFix && gps.location.age() > 2000) {
+    hasFix = false;
+  }
+
+  // --- 3. Refresh the display once per second ─────
   // This runs on its own timer so the screen always redraws with the
-  // latest stored values, even if isUpdated() fired between timer ticks.
-  if (hasFix && (millis() - lastDisplayUpdate >= DISPLAY_INTERVAL)) {
+  // latest stored values, or shows a warning if the fix is lost.
+  if (millis() - lastDisplayUpdate >= DISPLAY_INTERVAL) {
     lastDisplayUpdate = millis();
 
-    // Debug: print values to Serial Monitor so you can verify data is live.
-    Serial.print("[NAV] dist=");
-    Serial.print(navDistance, 1);
-    Serial.print("m  absBrg=");
-    Serial.print(navBearing, 1);
-    Serial.print("°  heading=");
-    Serial.print(navHeading, 1);
-    Serial.print("°  relBrg=");
-    double rel = navBearing - navHeading;
-    if (rel < 0) rel += 360.0;
-    if (rel >= 360.0) rel -= 360.0;
-    Serial.print(rel, 1);
-    Serial.println("°");
+    if (hasFix) {
+      // Debug: print values to Serial Monitor so you can verify data is live.
+      Serial.print("[NAV] dist=");
+      Serial.print(navDistance, 1);
+      Serial.print("m  absBrg=");
+      Serial.print(navBearing, 1);
+      Serial.print("°  heading=");
+      Serial.print(navHeading, 1);
+      Serial.print("°  relBrg=");
+      double rel = navBearing - navHeading;
+      if (rel < 0) rel += 360.0;
+      if (rel >= 360.0) rel -= 360.0;
+      Serial.print(rel, 1);
+      Serial.println("°");
 
-    if (navDistance <= RADIUS) {
-      showArrived();
+      if (navDistance <= RADIUS) {
+        showArrived();
+      } else {
+        showNavigation(navDistance, navBearing);
+      }
+
+      // Also print the full PVT dashboard to the TFT
+      drawDashboard();
     } else {
-      showNavigation(navDistance, navBearing);
+      // We do not have a fix, or we lost it
+      tft.fillScreen(ST77XX_BLACK);
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setTextSize(1);
+      tft.setCursor(4, 4);
+      tft.println(gps.location.age() > 2000 ? "Lost GPS fix, waiting..." : "Waiting for GPS fix...");
+      
+      // Set NeoPixel back to dim blue
+      pixel.setPixelColor(0, pixel.Color(0, 0, 50));
+      pixel.show();
     }
-
-    // Also print the full PVT dashboard to the TFT
-    drawDashboard();
   }
 
   // --- 3. Echo raw NMEA sentences to Serial Monitor for debugging ---
@@ -288,7 +305,6 @@ void showNavigation(double distance, double bearing) {
   // ── Centre section: directional arrow ──────────────────────────────────
   // Uses relative bearing when moving (turn indicator) or absolute bearing
   // when still (compass pointer toward target).
-  Serial.print("Arrow updated");
   drawArrow(120, 65, 35, arrowAngle, ST77XX_YELLOW);
 
   // Set NeoPixel to orange while navigating (not yet arrived).
