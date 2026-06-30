@@ -40,10 +40,8 @@
 #define NUM_PIXELS     1          // Single NeoPixel element
 
 // ── Navigation Target ───────────────────────────────────────────────────────
-//const double TARGET_LAT = 53.290800;
-//const double TARGET_LON = -6.363700;
-const double TARGET_LAT = 53.290856;// Ours
-const double TARGET_LON = -6.363254;// Ours
+const double TARGET_LAT = 53.291148;
+const double TARGET_LON = -6.362183;
 const double RADIUS     = 20.0;    // Destination "arrived" radius in metres
 
 // ── Object Instances ────────────────────────────────────────────────────────
@@ -76,6 +74,9 @@ double  navDistance = 0.0;
 double  navBearing  = 0.0;   // absolute bearing to target (0-360)
 double  navHeading  = 0.0;   // current direction of travel from GPS (0-360)
 
+// Heading hold is now infinite. We rely on the last known heading forever.
+unsigned long headingLastValidMs = 0;       // timestamp of last good heading
+
 // ── Forward Declarations ────────────────────────────────────────────────────
 void drawArrow(int cx, int cy, int len, double angleDeg, uint16_t color);
 void showArrived();
@@ -88,7 +89,7 @@ void drawDashboard();
 void setup() {
   // --- USB Serial (debug / Serial Monitor) ---
   Serial.begin(115200);
-  delay(1000);
+  delay(10);
 
   Serial.println("========================================");
   Serial.println("STMP26 GPS NMEA Reader");
@@ -105,7 +106,7 @@ void setup() {
   // --- GPS UART ---
   // 115200 baud is the LC29H default (NOT the common 9600 of older modules).
   GPSSerial.begin(115200, SERIAL_8N1, GPS_RX, GPS_TX);
-  delay(500);
+  delay(10);
 
   // --- NeoPixel ---
   pixel.begin();
@@ -128,7 +129,7 @@ void setup() {
   tft.setCursor(4, 4);
   tft.println("Waiting for GPS fix...");
 
-  delay(500);
+  delay(10);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -159,10 +160,12 @@ void loop() {
                    currLat, currLon, TARGET_LAT, TARGET_LON);
 
     // Current direction of travel reported by the GPS receiver.
-    // NOTE: course is only valid when you are physically MOVING (> ~1 km/h).
-    // When stationary the GPS cannot determine heading.
-    if (gps.course.isValid()) {
+    // NOTE: course is only valid when you are physically MOVING.
+    // If we are stationary, the GPS outputs random noise for heading.
+    // We strictly ONLY update navHeading if we are walking (> 0.8 km/h).
+    if (gps.course.isValid() && gps.speed.isValid() && gps.speed.kmph() > 0.8) {
       navHeading = gps.course.deg();
+      Serial.print("Nav Updated");
     }
   }
 
@@ -237,13 +240,23 @@ void showNavigation(double distance, double bearing) {
   // Clear previous frame.
   tft.fillScreen(ST77XX_BLACK);
 
-  // ── Compute RELATIVE bearing ───────────────────────────────────────────
-  // Relative bearing = (absolute bearing to target) − (your heading).
-  // This makes the arrow rotate as you turn, just like a real navigation
-  // app: arrow up = "keep walking forward", arrow left = "turn left", etc.
-  double relativeBearing = bearing - navHeading;
-  if (relativeBearing < 0)    relativeBearing += 360.0;
-  if (relativeBearing >= 360) relativeBearing -= 360.0;
+  // ── Always use relative bearing ────────────────────────────────────────
+  // GPS heading (course) is derived from movement between fixes.
+  // We will permanently hold the last known heading so the arrow ALWAYS
+  // acts as a relative turn indicator based on the last direction of travel.
+  
+  const double SPEED_THRESHOLD = 0.8;  // km/h — a gentle walk
+  bool movingNow = gps.speed.isValid() && (gps.speed.kmph() > SPEED_THRESHOLD);
+
+  if (movingNow) {
+    headingLastValidMs = millis();
+  }
+
+  double arrowAngle = bearing - navHeading;
+  if (arrowAngle < 0)    arrowAngle += 360.0;
+  if (arrowAngle >= 360) arrowAngle -= 360.0;
+  
+  const char* modeLabel = "REL";
 
   // ── Top section: distance remaining ────────────────────────────────────
   tft.setTextColor(ST77XX_CYAN);
@@ -263,17 +276,20 @@ void showNavigation(double distance, double bearing) {
   tft.print("Brg:");
   tft.print(bearing, 0);
   tft.print((char)247);           // ° symbol
-  tft.print(" Hdg:");
-  tft.print(navHeading, 0);
-  tft.print((char)247);
-  tft.print(" Rel:");
-  tft.print(relativeBearing, 0);
-  tft.print((char)247);
+  if (movingNow) {
+    tft.print(" Hdg:");
+    tft.print(navHeading, 0);
+    tft.print((char)247);
+  }
+  tft.print(" [");
+  tft.print(modeLabel);
+  tft.print("]");
 
   // ── Centre section: directional arrow ──────────────────────────────────
-  // The arrow uses RELATIVE bearing so it points the direction you need
-  // to TURN. Arrow pointing up = you're heading straight toward the target.
-  drawArrow(120, 65, 35, relativeBearing, ST77XX_YELLOW);
+  // Uses relative bearing when moving (turn indicator) or absolute bearing
+  // when still (compass pointer toward target).
+  Serial.print("Arrow updated");
+  drawArrow(120, 65, 35, arrowAngle, ST77XX_YELLOW);
 
   // Set NeoPixel to orange while navigating (not yet arrived).
   pixel.setPixelColor(0, pixel.Color(255, 80, 0));
