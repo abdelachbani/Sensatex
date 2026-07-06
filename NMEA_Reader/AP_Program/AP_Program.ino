@@ -1910,7 +1910,7 @@ void handleGps() {
 }
 
 void initSoftAP() {
-  Serial.println("\n--- Starting Sensatex Wi-Fi Off-Grid ---");
+  Serial.println("\n--- Starting Wi-Fi Off-Grid ---");
   WiFi.softAP(ssid, password);
   
   IPAddress IP = WiFi.softAPIP();
@@ -2210,7 +2210,7 @@ void showNavigation(double distance, double bearing) {
 // ═════════════════════════════════════════════════════════════════════════════
 void drawArrow(int cx, int cy, int len, double angleDeg, uint16_t color) {
   // Using sin/cos directly:  dx = sin(bearing), dy = -cos(bearing).
-  double rad = angleDeg * PI / 180.0; // Angle got by GPS antena data using Satellite HDOP information.
+  double rad = angleDeg * PI / 180.0; // Angle got by GPS antena data using Satellite low HDOP & VDOP information.
   double dx  =  sin(rad);        // unit vector component along +x
   double dy  = -cos(rad);        // unit vector component along +y (screen)
 
@@ -2237,11 +2237,12 @@ void drawArrow(int cx, int cy, int len, double angleDeg, uint16_t color) {
 
   tft.fillTriangle(tipX, tipY, lx, ly, rx, ry, color);
 
-  // ── Shaft (thick, 5-pixel wide band of parallel lines) ────────────────
   int shaftHalfW = 3;
   for (int i = -shaftHalfW; i <= shaftHalfW; i++) {
     int ox = (int)(i * px);
     int oy = (int)(i * py);
+    // Bresenham Algorithm for very fast drawing. Time complexity of O(N) | N = max(𝚫x , 𝚫y).
+    // Try to improve it if u dare to. (No GPU & DMA allowed, that's cheating).
     tft.drawLine(tailX + ox, tailY + oy, baseX + ox, baseY + oy, color);
   }
 }
